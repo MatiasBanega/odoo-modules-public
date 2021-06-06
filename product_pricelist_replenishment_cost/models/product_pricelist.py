@@ -1,0 +1,41 @@
+# Copyright 2021 APA! Argentina - Matias Cerutti
+# Based on 2018 Tecnativa product_pricelist_supplierinfo
+# License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl)
+
+from odoo import fields, models
+
+
+class ProductPricelist(models.Model):
+    _inherit = "product.pricelist"
+
+    def _compute_price_rule(self, products_qty_partner, date=False, uom_id=False):
+        """Recompute price after calling the atomic super method for
+        getting proper prices when based on supplier info.
+        """
+        rule_obj = self.env["product.pricelist.item"]
+        result = super()._compute_price_rule(products_qty_partner, date, uom_id)
+        # Make sure all rule records are fetched at once at put in cache
+        rule_obj.browse(x[1] for x in result.values()).mapped("price_discount")
+        for product, qty, _partner in products_qty_partner:
+            rule = rule_obj.browse(result[product.id][1])
+            if rule.compute_price == "formula" and rule.base == "replenishmentcost":
+                context = self.env.context
+                result[product.id] = (
+                    product._get_replenishmentinfo_pricelist_price(
+                        rule,
+                        date=date or context.get("date", fields.Date.today()),
+                        quantity=qty,
+                    ),
+                    rule.id,
+                )
+                
+        return result
+
+
+class ProductPricelistItem(models.Model):
+    _inherit = "product.pricelist.item"
+
+    base = fields.Selection(
+        selection_add=[("replenishmentcost", "Prices based on replenishment cost")],
+        ondelete={'replenishmentcost':'set default'},
+    )
